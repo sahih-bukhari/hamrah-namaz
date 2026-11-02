@@ -24,69 +24,74 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
+      - name: Verify ZIP Archive
+        run: |
+          test -f hamrah-namaz-pro.zip
+          unzip -t hamrah-namaz-pro.zip
+
+      - name: Extract Project
+        run: |
+          mkdir -p site-source
+          unzip -q hamrah-namaz-pro.zip -d site-source
+          test -f site-source/package.json
+          test -f site-source/package-lock.json
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
-
-      - name: Find ZIP File
-        id: zip
-        run: |
-          ZIP=$(find . -maxdepth 1 -name "hamrah-namaz-pro.zip" -print -quit)
-          if [ -z "$ZIP" ]; then
-            echo "ZIP file not found!"
-            exit 1
-          fi
-          echo "file=$ZIP" >> "$GITHUB_OUTPUT"
-
-      - name: Extract Project ZIP
-        run: |
-          mkdir extracted
-          unzip -q "${{ steps.zip.outputs.file }}" -d extracted
-
-      - name: Find Project Directory
-        id: project
-        run: |
-          PACKAGE=$(find extracted -name package.json -not -path "*/node_modules/*" -print -quit)
-          if [ -z "$PACKAGE" ]; then
-            echo "package.json not found!"
-            exit 1
-          fi
-          DIR=$(dirname "$PACKAGE")
-          echo "dir=$DIR" >> "$GITHUB_OUTPUT"
+          cache-dependency-path: site-source/package-lock.json
 
       - name: Install Dependencies
-        working-directory: ${{ steps.project.outputs.dir }}
-        run: |
-          if [ -f package-lock.json ]; then
-            npm ci
-          else
-            npm install
-          fi
+        working-directory: site-source
+        run: npm ci
 
-      - name: Build Project
-        working-directory: ${{ steps.project.outputs.dir }}
+      - name: Configure GitHub Pages Base Path
+        working-directory: site-source
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("vite.config.js")
+          content = path.read_text(encoding="utf-8")
+
+          old = "base: '/',"
+          new = "base: '/hamrah-namaz/',"
+
+          if new not in content:
+              if old not in content:
+                  raise SystemExit("Could not locate Vite base setting")
+              content = content.replace(old, new, 1)
+
+          path.write_text(content, encoding="utf-8")
+          PY
+
+      - name: Build Website
+        working-directory: site-source
         run: npm run build
 
-      - name: Verify Build
+      - name: Verify Website Build
         run: |
-          test -f "${{ steps.project.outputs.dir }}/dist/index.html"
+          test -f site-source/dist/index.html
+          test -d site-source/dist/assets
+          echo "Website build verified successfully."
 
-      - name: Upload Website
+      - name: Upload Pages Artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: ${{ steps.project.outputs.dir }}/dist
+          path: site-source/dist
 
   deploy:
+    runs-on: ubuntu-latest
+    needs: build
+
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
 
-    runs-on: ubuntu-latest
-    needs: build
-
     steps:
-      - name: Deploy to GitHub Pages
+      - name: Deploy Website
         id: deployment
         uses: actions/deploy-pages@v4
+
