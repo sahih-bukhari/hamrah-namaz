@@ -1,0 +1,61 @@
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare project (unzip if only a zip is in the repo)
+        run: |
+          if [ -f index.html ]; then
+            echo "SRC=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
+          else
+            ZIP=$(ls -1 *.zip | head -n 1)
+            rm -rf /tmp/site && mkdir /tmp/site
+            unzip -q "$ZIP" -d /tmp/site
+            if [ ! -f /tmp/site/index.html ]; then
+              DIR=$(find /tmp/site -maxdepth 2 -name index.html -not -path '*/node_modules/*' | head -n 1 | xargs dirname)
+              echo "SRC=$DIR" >> "$GITHUB_ENV"
+            else
+              echo "SRC=/tmp/site" >> "$GITHUB_ENV"
+            fi
+          fi
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install and build
+        working-directory: ${{ env.SRC }}
+        run: |
+          npm install --no-audit --no-fund
+          npm run build
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: ${{ env.SRC }}/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
