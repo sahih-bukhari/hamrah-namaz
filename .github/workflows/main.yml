@@ -1,10 +1,8 @@
-
-name: Build and Deploy Hamrah Namaz
+name: Deploy to GitHub Pages
 
 on:
   push:
-    branches:
-      - main
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -13,85 +11,52 @@ permissions:
   id-token: write
 
 concurrency:
-  group: github-pages
+  group: pages
   cancel-in-progress: true
 
 jobs:
   build:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Verify ZIP Archive
+      - name: Prepare project (unzip if only a zip is in the repo)
         run: |
-          test -f hamrah-namaz-pro.zip
-          unzip -t hamrah-namaz-pro.zip
+          if [ -f index.html ]; then
+            echo "SRC=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
+          else
+            ZIP=$(ls -1 *.zip | head -n 1)
+            rm -rf /tmp/site && mkdir /tmp/site
+            unzip -q "$ZIP" -d /tmp/site
+            if [ ! -f /tmp/site/index.html ]; then
+              DIR=$(find /tmp/site -maxdepth 2 -name index.html -not -path '*/node_modules/*' | head -n 1 | xargs dirname)
+              echo "SRC=$DIR" >> "$GITHUB_ENV"
+            else
+              echo "SRC=/tmp/site" >> "$GITHUB_ENV"
+            fi
+          fi
 
-      - name: Extract Project
-        run: |
-          mkdir -p site-source
-          unzip -q hamrah-namaz-pro.zip -d site-source
-          test -f site-source/package.json
-          test -f site-source/package-lock.json
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
-          cache-dependency-path: site-source/package-lock.json
 
-      - name: Install Dependencies
-        working-directory: site-source
-        run: npm ci
-
-      - name: Configure GitHub Pages Base Path
-        working-directory: site-source
+      - name: Install and build
+        working-directory: ${{ env.SRC }}
         run: |
-          python3 - <<'PY'
-          from pathlib import Path
+          npm install --no-audit --no-fund
+          npm run build
 
-          path = Path("vite.config.js")
-          content = path.read_text(encoding="utf-8")
-
-          old = "base: '/',"
-          new = "base: '/hamrah-namaz/',"
-
-          if new not in content:
-              if old not in content:
-                  raise SystemExit("Could not locate Vite base setting")
-              content = content.replace(old, new, 1)
-
-          path.write_text(content, encoding="utf-8")
-          PY
-
-      - name: Build Website
-        working-directory: site-source
-        run: npm run build
-
-      - name: Verify Website Build
-        run: |
-          test -f site-source/dist/index.html
-          test -d site-source/dist/assets
-          echo "Website build verified successfully."
-
-      - name: Upload Pages Artifact
-        uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@v3
         with:
-          path: site-source/dist
+          path: ${{ env.SRC }}/dist
 
   deploy:
-    runs-on: ubuntu-latest
     needs: build
-
+    runs-on: ubuntu-latest
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
-
     steps:
-      - name: Deploy Website
-        id: deployment
+      - id: deployment
         uses: actions/deploy-pages@v4
 
